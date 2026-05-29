@@ -119,6 +119,11 @@ async def take_deal(callback: CallbackQuery):
 @dp.message(F.photo)
 async def receipt_handler(message: Message):
 
+    print("PHOTO RECEIVED")
+
+    if message.reply_to_message:
+        print("REPLY TO:", message.reply_to_message.message_id)
+
     if not message.reply_to_message:
         return
 
