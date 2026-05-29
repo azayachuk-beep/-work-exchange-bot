@@ -46,7 +46,7 @@ def take_keyboard():
     )
 
 
-@dp.message(F.chat.id == GROUP_ID)
+@dp.message()
 async def deal_handler(message: Message):
 
     content = message.text or message.caption or ""
