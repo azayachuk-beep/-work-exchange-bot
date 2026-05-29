@@ -13,7 +13,6 @@ from aiogram.types import (
 
 TOKEN = os.getenv("TOKEN")
 
-
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
 
@@ -70,9 +69,8 @@ async def deal_handler(message: Message):
         "worker_name": None,
         "reaction": 0,
         "receipt": False,
-        "fact_rate": None,
+        "fact_rate": "",
         "deal_rate": deal_rate,
-        "deal_message_id": message.message_id,
     }
 
 
@@ -82,6 +80,7 @@ async def take_deal(callback: CallbackQuery):
     deal = deals.get(callback.message.message_id)
 
     if not deal:
+        await callback.answer()
         return
 
     if deal["worker_id"]:
@@ -113,15 +112,55 @@ async def take_deal(callback: CallbackQuery):
     await callback.answer()
 
 
-@dp.message()
+@dp.message(F.photo)
 async def receipt_handler(message: Message):
 
-    print(
-        "PHOTO:", bool(message.photo),
-        "DOCUMENT:", bool(message.document),
-        "TEXT:", bool(message.text),
-        "REPLY:", bool(message.reply_to_message),
-        "CAPTION:", message.caption
+    if not message.reply_to_message:
+        return
+
+    service_message_id = message.reply_to_message.message_id
+
+    deal = deals.get(service_message_id)
+
+    if not deal:
+        return
+
+    if message.from_user.id != deal["worker_id"]:
+        return
+
+    if deal["receipt"]:
+        return
+
+    fact_rate = ""
+
+    if message.caption:
+        fact_rate = message.caption.strip()
+
+    deal["receipt"] = True
+    deal["fact_rate"] = fact_rate
+
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="✅ Завершить сделку",
+                    callback_data="close"
+                )
+            ]
+        ]
+    )
+
+    await bot.edit_message_text(
+        chat_id=message.chat.id,
+        message_id=service_message_id,
+        text=
+        f"📋 Статус: В работе\n\n"
+        f"👤 Исполнитель: {deal['worker_name']}\n"
+        f"⚡ Реакция: {deal['reaction']} сек\n\n"
+        f"💱 Курс сделки: {deal['deal_rate']}\n"
+        f"💸 Фактический курс: {fact_rate}\n\n"
+        f"📸 Квитанция загружена",
+        reply_markup=keyboard
     )
 
 
@@ -131,7 +170,31 @@ async def close_deal(callback: CallbackQuery):
     deal = deals.get(callback.message.message_id)
 
     if not deal:
+        await callback.answer()
         return
+
+    if callback.from_user.id != deal["author_id"]:
+        await callback.answer(
+            "Закрыть может только автор сделки",
+            show_alert=True
+        )
+        return
+
+    if not deal["receipt"]:
+        await callback.answer(
+            "Сначала загрузите квитанцию",
+            show_alert=True
+        )
+        return
+
+    await callback.message.edit_text(
+        f"✅ Сделка завершена\n\n"
+        f"👤 Исполнитель: {deal['worker_name']}\n"
+        f"📨 Автор: {deal['author_name']}\n\n"
+        f"💱 Курс сделки: {deal['deal_rate']}\n"
+        f"💸 Фактический курс: {deal['fact_rate']}\n\n"
+        f"⚡ Реакция: {deal['reaction']} сек"
+    )
 
     await callback.answer()
 
@@ -145,10 +208,7 @@ async def main():
     print(f"BOT USERNAME: @{me.username}")
     print(f"BOT ID: {me.id}")
 
-    await dp.start_polling(
-        bot,
-        allowed_updates=["message", "callback_query"]
-    )
+    await dp.start_polling(bot)
 
 
 if __name__ == "__main__":
