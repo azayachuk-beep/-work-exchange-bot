@@ -116,8 +116,11 @@ async def take_deal(callback: CallbackQuery):
     await callback.answer()
 
 
-@dp.message(F.photo)
+@dp.message()
 async def receipt_handler(message: Message):
+
+    if not message.photo:
+        return
 
     print("PHOTO RECEIVED")
 
@@ -125,6 +128,7 @@ async def receipt_handler(message: Message):
         print("REPLY TO:", message.reply_to_message.message_id)
 
     if not message.reply_to_message:
+        print("NO REPLY")
         return
 
     deal = None
@@ -137,12 +141,15 @@ async def receipt_handler(message: Message):
             break
 
     if not deal:
+        print("DEAL NOT FOUND")
         return
 
     if message.from_user.id != deal["worker_id"]:
+        print("WRONG WORKER")
         return
 
     if deal["receipt"]:
+        print("RECEIPT ALREADY EXISTS")
         return
 
     rate = ""
@@ -177,6 +184,8 @@ async def receipt_handler(message: Message):
         reply_markup=keyboard
     )
 
+    print("RECEIPT SAVED")
+
 
 @dp.callback_query(F.data == "close")
 async def close_deal(callback: CallbackQuery):
@@ -210,18 +219,7 @@ async def close_deal(callback: CallbackQuery):
     )
 
     await callback.answer()
-@dp.message()
-async def debug_all(message: Message):
-    print(
-        "MESSAGE:",
-        message.message_id,
-        "PHOTO:",
-        bool(message.photo),
-        "TEXT:",
-        bool(message.text),
-        "CAPTION:",
-        message.caption
-    )
+
 
 async def main():
     print("WORK BOT STARTED")
