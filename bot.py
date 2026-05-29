@@ -32,6 +32,21 @@ def user_label(user) -> str:
     return user.full_name or "Неизвестно"
 
 
+def normalize_number(value: float) -> str:
+    text = f"{value:.10f}".rstrip("0").rstrip(".")
+    return text if text else "0"
+
+
+def parse_first_number(text: str) -> float:
+    match = re.search(r"([0-9]+(?:[.,][0-9]+)?)", text)
+    if not match:
+        return 0.0
+    try:
+        return float(match.group(1).replace(",", "."))
+    except ValueError:
+        return 0.0
+
+
 def load_logs():
     try:
         with open(LOG_FILE, "r", encoding="utf-8") as f:
@@ -43,7 +58,7 @@ def load_logs():
     return []
 
 
-def save_log(author, worker):
+def save_log(author, worker, profit=0.0, pay_amount=0.0, deal_rate=0.0, fact_rate=0.0):
     try:
         data = load_logs()
         data.append(
@@ -51,6 +66,10 @@ def save_log(author, worker):
                 "date": str(date.today()),
                 "author": author,
                 "worker": worker,
+                "profit": round(float(profit), 2),
+                "pay_amount": float(pay_amount),
+                "deal_rate": float(deal_rate),
+                "fact_rate": float(fact_rate),
             }
         )
         with open(LOG_FILE, "w", encoding="utf-8") as f:
@@ -79,6 +98,27 @@ def get_deal_rate(text: str) -> str:
     return "Не найден"
 
 
+def get_pay_amount(text: str) -> float:
+    """
+    Ищет сумму в строке 'Платите: 10,147 UAH'
+    """
+    match = re.search(
+        r"Платите:\s*([0-9][0-9,.\s]*)",
+        text,
+        re.IGNORECASE | re.DOTALL,
+    )
+    if not match:
+        return 0.0
+
+    value = match.group(1)
+    value = value.replace(" ", "").replace(",", "")
+
+    try:
+        return float(value)
+    except ValueError:
+        return 0.0
+
+
 def extract_fact_rate(text: str) -> str:
     """
     Достаёт фактический курс из ответа сотрудника.
@@ -87,10 +127,10 @@ def extract_fact_rate(text: str) -> str:
     - 44,2
     - курс 44.2
     """
-    match = re.search(r"([0-9]+(?:[.,][0-9]+)?)", text)
-    if match:
-        return match.group(1).replace(",", ".")
-    return ""
+    value = parse_first_number(text)
+    if value <= 0:
+        return ""
+    return normalize_number(value)
 
 
 def kb_take() -> InlineKeyboardMarkup:
@@ -152,6 +192,46 @@ def stats_by_field(field: str, title: str) -> str:
     return "\n".join(lines)
 
 
+def profit_stats() -> str:
+    logs = load_logs()
+    today = str(date.today())
+
+    totals = {}
+
+    for item in logs:
+        if item.get("date") != today:
+            continue
+
+        author = item.get("author")
+        if not author:
+            continue
+
+        try:
+            profit = float(item.get("profit", 0))
+        except Exception:
+            profit = 0.0
+
+        totals[author] = totals.get(author, 0.0) + profit
+
+    if not totals:
+        return "💰 Профит авторов за сегодня\n\nСегодня сделок нет"
+
+    lines = ["💰 Профит авторов за сегодня", ""]
+    total_sum = 0.0
+
+    for idx, (author, value) in enumerate(
+        sorted(totals.items(), key=lambda x: x[1], reverse=True),
+        start=1,
+    ):
+        lines.append(f"{idx}. {author} — ${value:.2f}")
+        total_sum += value
+
+    lines.append("")
+    lines.append(f"💵 Итого: ${total_sum:.2f}")
+
+    return "\n".join(lines)
+
+
 @dp.message()
 async def handle_messages(message: Message):
     content = (message.text or message.caption or "").strip()
@@ -181,6 +261,10 @@ async def handle_messages(message: Message):
         )
         return
 
+    if content.startswith("/profit"):
+        await message.answer(profit_stats())
+        return
+
     # 1) Если это ответ на карточку "Ожидает курс" — принимаем фактический курс
     if message.reply_to_message:
         service_message_id = message.reply_to_message.message_id
@@ -196,6 +280,7 @@ async def handle_messages(message: Message):
                 return
 
             deal["fact_rate"] = fact_rate
+            deal["fact_rate_value"] = parse_first_number(fact_rate)
             deal["state"] = "awaiting_close"
 
             await bot.edit_message_text(
@@ -216,6 +301,8 @@ async def handle_messages(message: Message):
     # 2) Новая сделка
     if "Сделка #" in content:
         deal_rate = get_deal_rate(content)
+        deal_rate_value = parse_first_number(deal_rate)
+        pay_amount = get_pay_amount(content)
 
         service = await message.reply(
             f"📋 Статус: Свободна\n\n"
@@ -232,7 +319,11 @@ async def handle_messages(message: Message):
             "worker_name": None,
             "reaction": 0,
             "deal_rate": deal_rate,
+            "deal_rate_value": deal_rate_value,
             "fact_rate": "",
+            "fact_rate_value": 0.0,
+            "pay_amount": pay_amount,
+            "profit": 0.0,
             "service_message_id": service.message_id,
         }
         return
@@ -313,9 +404,26 @@ async def close_deal(callback: CallbackQuery):
 
     deal["state"] = "closed"
 
+    deal_rate_value = float(deal.get("deal_rate_value", 0.0) or 0.0)
+    fact_rate_value = float(deal.get("fact_rate_value", 0.0) or 0.0)
+    pay_amount = float(deal.get("pay_amount", 0.0) or 0.0)
+
+    profit = 0.0
+    if pay_amount > 0 and deal_rate_value > 0 and fact_rate_value > 0:
+        profit = round(
+            (pay_amount / deal_rate_value) - (pay_amount / fact_rate_value),
+            2
+        )
+
+    deal["profit"] = profit
+
     save_log(
         deal["author_name"],
-        deal["worker_name"]
+        deal["worker_name"],
+        profit=profit,
+        pay_amount=pay_amount,
+        deal_rate=deal_rate_value,
+        fact_rate=fact_rate_value,
     )
 
     await callback.message.edit_text(
@@ -323,10 +431,13 @@ async def close_deal(callback: CallbackQuery):
         f"👤 Исполнитель: {deal['worker_name']}\n"
         f"📨 Автор: {deal['author_name']}\n\n"
         f"💱 Курс сделки: {deal['deal_rate']}\n"
-        f"💸 Фактический курс: {deal['fact_rate']}\n\n"
+        f"💸 Фактический курс: {deal['fact_rate']}\n"
+        f"💰 Профит: ${profit:.2f}\n\n"
         f"⚡ Реакция: {deal['reaction']} сек",
         reply_markup=None
     )
+
+    deals.pop(callback.message.message_id, None)
 
     await callback.answer()
 
