@@ -103,19 +103,24 @@ def get_pay_amount(text: str) -> float:
     Ищет сумму в строке 'Платите: 10,147 UAH'
     """
     match = re.search(
-        r"Платите:\s*([0-9][0-9,.\s]*)",
+        r"Платите:\s*([\d\s,\.]+)",
         text,
-        re.IGNORECASE | re.DOTALL,
+        re.IGNORECASE
     )
+
     if not match:
         return 0.0
 
     value = match.group(1)
-    value = value.replace(" ", "").replace(",", "")
+    value = (
+        value.replace(" ", "")
+             .replace(",", "")
+             .strip()
+    )
 
     try:
         return float(value)
-    except ValueError:
+    except Exception:
         return 0.0
 
 
@@ -432,6 +437,7 @@ async def close_deal(callback: CallbackQuery):
         f"📨 Автор: {deal['author_name']}\n\n"
         f"💱 Курс сделки: {deal['deal_rate']}\n"
         f"💸 Фактический курс: {deal['fact_rate']}\n"
+        f"💵 Сумма сделки: {deal['pay_amount']}\n"
         f"💰 Профит: ${profit:.2f}\n\n"
         f"⚡ Реакция: {deal['reaction']} сек",
         reply_markup=None
