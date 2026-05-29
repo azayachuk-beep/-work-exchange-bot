@@ -1,4 +1,5 @@
 import os
+import re
 import asyncio
 from datetime import datetime
 
@@ -20,6 +21,19 @@ dp = Dispatcher()
 deals = {}
 
 
+def get_deal_rate(text):
+    match = re.search(
+        r"Цена за.*?1 USDT.*?([0-9]+(?:\.[0-9]+)?)\s*([A-Z]+)",
+        text,
+        re.IGNORECASE | re.DOTALL,
+    )
+
+    if match:
+        return f"{match.group(1)} {match.group(2)}"
+
+    return "Не найден"
+
+
 def take_keyboard():
     return InlineKeyboardMarkup(
         inline_keyboard=[
@@ -36,14 +50,16 @@ def take_keyboard():
 @dp.message(F.chat.id == GROUP_ID)
 async def deal_handler(message: Message):
 
-    if not message.text:
+    content = message.text or message.caption or ""
+
+    if "Сделка #" not in content:
         return
 
-    if "Сделка #" not in message.text:
-        return
+    deal_rate = get_deal_rate(content)
 
     service = await message.reply(
-        "📋 Статус: Свободна",
+        f"📋 Статус: Свободна\n\n"
+        f"💱 Курс сделки: {deal_rate}",
         reply_markup=take_keyboard()
     )
 
@@ -54,6 +70,9 @@ async def deal_handler(message: Message):
         "worker_id": None,
         "worker_name": None,
         "reaction": 0,
+        "receipt": False,
+        "fact_rate": None,
+        "deal_rate": deal_rate,
     }
 
 
@@ -77,6 +96,7 @@ async def take_deal(callback: CallbackQuery):
     )
 
     deal["worker_id"] = callback.from_user.id
+
     deal["worker_name"] = (
         callback.from_user.username
         or callback.from_user.full_name
@@ -84,25 +104,59 @@ async def take_deal(callback: CallbackQuery):
 
     deal["reaction"] = reaction
 
+    await callback.message.edit_text(
+        f"📋 Статус: В работе\n\n"
+        f"👤 Исполнитель: {deal['worker_name']}\n"
+        f"⚡ Реакция: {reaction} сек\n\n"
+        f"💱 Курс сделки: {deal['deal_rate']}\n\n"
+        f"📸 Квитанция: ожидается"
+    )
+
+    await callback.answer()
+
+
+@dp.message(F.photo)
+async def receipt_handler(message: Message):
+
+    if not message.reply_to_message:
+        return
+
+    deal = deals.get(message.reply_to_message.message_id)
+
+    if not deal:
+        return
+
+    if message.from_user.id != deal["worker_id"]:
+        return
+
+    rate = ""
+
+    if message.caption:
+        rate = message.caption.strip()
+
+    deal["receipt"] = True
+    deal["fact_rate"] = rate
+
     keyboard = InlineKeyboardMarkup(
         inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text="✅ Сделка завершена",
+                    text="✅ Завершить сделку",
                     callback_data="close"
                 )
             ]
         ]
     )
 
-    await callback.message.edit_text(
+    await message.reply_to_message.edit_text(
         f"📋 Статус: В работе\n\n"
         f"👤 Исполнитель: {deal['worker_name']}\n"
-        f"⚡ Реакция: {reaction} сек",
+        f"⚡ Реакция: {deal['reaction']} сек\n\n"
+        f"💱 Курс сделки: {deal['deal_rate']}\n"
+        f"💸 Фактический курс: {rate}\n\n"
+        f"📸 Квитанция загружена",
         reply_markup=keyboard
     )
-
-    await callback.answer()
 
 
 @dp.callback_query(F.data == "close")
@@ -120,10 +174,19 @@ async def close_deal(callback: CallbackQuery):
         )
         return
 
+    if not deal["receipt"]:
+        await callback.answer(
+            "Сначала загрузите квитанцию",
+            show_alert=True
+        )
+        return
+
     await callback.message.edit_text(
         f"✅ Сделка завершена\n\n"
         f"👤 Исполнитель: {deal['worker_name']}\n"
-        f"📨 Автор: {deal['author_name']}\n"
+        f"📨 Автор: {deal['author_name']}\n\n"
+        f"💱 Курс сделки: {deal['deal_rate']}\n"
+        f"💸 Фактический курс: {deal['fact_rate']}\n\n"
         f"⚡ Реакция: {deal['reaction']} сек"
     )
 
