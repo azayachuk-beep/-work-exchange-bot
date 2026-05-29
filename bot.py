@@ -1,7 +1,9 @@
 import os
 import re
+import json
 import asyncio
-from datetime import datetime
+from collections import Counter
+from datetime import datetime, date
 
 from aiogram import Bot, Dispatcher, F
 from aiogram.types import (
@@ -20,13 +22,35 @@ dp = Dispatcher()
 # key = service_message_id (сообщение бота с карточкой сделки)
 deals = {}
 
+LOG_FILE = "deals_log.json"
+
 
 def user_label(user) -> str:
     """Красивое имя пользователя."""
     if getattr(user, "username", None):
         return f"@{user.username}"
     return user.full_name or "Неизвестно"
+def save_log(author, worker):
 
+    try:
+        with open(LOG_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except:
+        data = []
+
+    data.append({
+        "date": str(date.today()),
+        "author": author,
+        "worker": worker
+    })
+
+    with open(LOG_FILE, "w", encoding="utf-8") as f:
+        json.dump(
+            data,
+            f,
+            ensure_ascii=False,
+            indent=2
+        )
 
 def get_deal_rate(text: str) -> str:
     """
@@ -240,7 +264,12 @@ async def close_deal(callback: CallbackQuery):
 
     deal["state"] = "closed"
 
-    await callback.message.edit_text(
+save_log(
+    deal["author_name"],
+    deal["worker_name"]
+)
+
+await callback.message.edit_text(
         f"✅ Сделка завершена\n\n"
         f"👤 Исполнитель: {deal['worker_name']}\n"
         f"📨 Автор: {deal['author_name']}\n\n"
