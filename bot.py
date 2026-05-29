@@ -210,7 +210,18 @@ async def close_deal(callback: CallbackQuery):
     )
 
     await callback.answer()
-
+@dp.message()
+async def debug_all(message: Message):
+    print(
+        "MESSAGE:",
+        message.message_id,
+        "PHOTO:",
+        bool(message.photo),
+        "TEXT:",
+        bool(message.text),
+        "CAPTION:",
+        message.caption
+    )
 
 async def main():
     print("WORK BOT STARTED")
