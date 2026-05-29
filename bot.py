@@ -45,7 +45,7 @@ def take_keyboard():
     )
 
 
-@dp.message()
+@dp.message(F.text | F.caption)
 async def deal_handler(message: Message):
 
     content = message.text or message.caption or ""
