@@ -3,7 +3,8 @@ import re
 import json
 import asyncio
 from collections import Counter
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
+from zoneinfo import ZoneInfo
 
 from aiogram import Bot, Dispatcher, F
 from aiogram.types import (
@@ -23,6 +24,7 @@ dp = Dispatcher()
 deals = {}
 
 LOG_FILE = "deals_log.json"
+TZ = ZoneInfo("Asia/Tbilisi")
 
 
 def user_label(user) -> str:
@@ -49,9 +51,36 @@ def parse_first_number(text: str) -> float:
 
 def format_amount(value: float) -> str:
     """Красиво показывает сумму без лишних .0."""
-    if float(value).is_integer():
+    try:
+        value = float(value)
+    except Exception:
+        return "0"
+
+    if value.is_integer():
         return str(int(value))
-    return normalize_number(float(value))
+    return normalize_number(value)
+
+
+def current_date() -> date:
+    return datetime.now(TZ).date()
+
+
+def current_date_key() -> str:
+    return str(current_date())
+
+
+def parse_date_key(value: str):
+    try:
+        return datetime.strptime(value, "%Y-%m-%d").date()
+    except Exception:
+        return None
+
+
+def is_within_last_days(date_str: str, days: int) -> bool:
+    d = parse_date_key(date_str)
+    if not d:
+        return False
+    return d >= (current_date() - timedelta(days=days))
 
 
 def load_logs():
@@ -70,7 +99,7 @@ def save_log(author, worker, profit=0.0, pay_amount=0.0, deal_rate=0.0, fact_rat
         data = load_logs()
         data.append(
             {
-                "date": str(date.today()),
+                "date": current_date_key(),
                 "author": author,
                 "worker": worker,
                 "profit": round(float(profit), 2),
@@ -154,19 +183,6 @@ def kb_take() -> InlineKeyboardMarkup:
     )
 
 
-def kb_receipt() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text="📸 Квитанция загружена",
-                    callback_data="receipt_loaded"
-                )
-            ]
-        ]
-    )
-
-
 def kb_close() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
@@ -180,18 +196,24 @@ def kb_close() -> InlineKeyboardMarkup:
     )
 
 
-def stats_by_field(field: str, title: str) -> str:
+def stats_by_field(field: str, title: str, days: int = 0) -> str:
     logs = load_logs()
-    today = str(date.today())
 
-    counter = Counter(
-        item.get(field)
-        for item in logs
-        if item.get("date") == today and item.get(field)
-    )
+    if days == 0:
+        filtered = [
+            item for item in logs
+            if item.get("date") == current_date_key() and item.get(field)
+        ]
+    else:
+        filtered = [
+            item for item in logs
+            if item.get("date") and is_within_last_days(item.get("date"), days) and item.get(field)
+        ]
+
+    counter = Counter(item.get(field) for item in filtered)
 
     if not counter:
-        return f"{title}\n\nСегодня сделок нет"
+        return f"{title}\n\nСегодня сделок нет" if days == 0 else f"{title}\n\nЗа период сделок нет"
 
     lines = [title, ""]
     for idx, (name, count) in enumerate(counter.most_common(), start=1):
@@ -200,16 +222,22 @@ def stats_by_field(field: str, title: str) -> str:
     return "\n".join(lines)
 
 
-def profit_stats() -> str:
+def profit_stats(days: int = 0) -> str:
     logs = load_logs()
-    today = str(date.today())
+
+    if days == 0:
+        filtered = [item for item in logs if item.get("date") == current_date_key()]
+        title = "💰 Профит авторов за сегодня"
+    else:
+        filtered = [
+            item for item in logs
+            if item.get("date") and is_within_last_days(item.get("date"), days)
+        ]
+        title = "💰 Профит авторов за неделю"
 
     totals = {}
 
-    for item in logs:
-        if item.get("date") != today:
-            continue
-
+    for item in filtered:
         author = item.get("author")
         if not author:
             continue
@@ -222,9 +250,9 @@ def profit_stats() -> str:
         totals[author] = totals.get(author, 0.0) + profit
 
     if not totals:
-        return "💰 Профит авторов за сегодня\n\nСегодня сделок нет"
+        return f"{title}\n\nСегодня сделок нет" if days == 0 else f"{title}\n\nЗа период сделок нет"
 
-    lines = ["💰 Профит авторов за сегодня", ""]
+    lines = [title, ""]
     total_sum = 0.0
 
     for idx, (author, value) in enumerate(
@@ -247,9 +275,31 @@ async def handle_messages(message: Message):
     if not content:
         return
 
+    # Команды
+    if content.startswith("/today"):
+        logs = load_logs()
+        count = sum(1 for item in logs if item.get("date") == current_date_key())
+        await message.answer(f"📊 Сегодня\n\n✅ Завершено сделок: {count}")
+        return
+
+    if content.startswith("/week"):
+        logs = load_logs()
+        count = sum(
+            1 for item in logs
+            if item.get("date") and is_within_last_days(item.get("date"), 6)
+        )
+        await message.answer(f"📊 За неделю\n\n✅ Завершено сделок: {count}")
+        return
+
     if content.startswith("/workers"):
         await message.answer(
             stats_by_field("worker", "👨‍💼 Исполнители за сегодня")
+        )
+        return
+
+    if content.startswith("/week_workers"):
+        await message.answer(
+            stats_by_field("worker", "👨‍💼 Исполнители за неделю", days=6)
         )
         return
 
@@ -259,13 +309,9 @@ async def handle_messages(message: Message):
         )
         return
 
-    if content.startswith("/today"):
-        logs = load_logs()
-        today = str(date.today())
-        count = sum(1 for item in logs if item.get("date") == today)
-
+    if content.startswith("/week_authors"):
         await message.answer(
-            f"📊 Сегодня\n\n✅ Завершено сделок: {count}"
+            stats_by_field("author", "📝 Авторы за неделю", days=6)
         )
         return
 
@@ -273,7 +319,11 @@ async def handle_messages(message: Message):
         await message.answer(profit_stats())
         return
 
-    # 1) Если это ответ на карточку "Ожидает курс" — принимаем фактический курс
+    if content.startswith("/week_profit"):
+        await message.answer(profit_stats(days=6))
+        return
+
+    # Если это ответ на карточку "Ожидает курс" — принимаем фактический курс
     if message.reply_to_message:
         service_message_id = message.reply_to_message.message_id
         deal = deals.get(service_message_id)
@@ -301,13 +351,13 @@ async def handle_messages(message: Message):
                     f"💱 Курс сделки: {deal['deal_rate']}\n"
                     f"💸 Фактический курс: {deal['fact_rate']}\n"
                     f"💵 Сумма сделки: {format_amount(deal['pay_amount'])}\n\n"
-                    f"📸 Квитанция загружена"
+                    f"Ответьте на это сообщение, если нужно завершить сделку."
                 ),
                 reply_markup=kb_close()
             )
             return
 
-    # 2) Новая сделка
+    # Новая сделка
     if "Сделка #" in content:
         deal_rate = get_deal_rate(content)
         deal_rate_value = parse_first_number(deal_rate)
@@ -352,7 +402,7 @@ async def take_deal(callback: CallbackQuery):
 
     reaction = int((datetime.now() - deal["created"]).total_seconds())
 
-    deal["state"] = "working"
+    deal["state"] = "awaiting_rate"
     deal["worker_id"] = callback.from_user.id
     deal["worker_name"] = user_label(callback.from_user)
     deal["reaction"] = reaction
@@ -361,35 +411,6 @@ async def take_deal(callback: CallbackQuery):
         f"📋 Статус: В работе\n\n"
         f"👤 Исполнитель: {deal['worker_name']}\n"
         f"⚡ Реакция: {reaction} сек\n\n"
-        f"💱 Курс сделки: {deal['deal_rate']}\n"
-        f"💵 Сумма сделки: {format_amount(deal['pay_amount'])}\n\n"
-        f"📸 Квитанция: ожидается",
-        reply_markup=kb_receipt()
-    )
-
-    await callback.answer()
-
-
-@dp.callback_query(F.data == "receipt_loaded")
-async def receipt_loaded(callback: CallbackQuery):
-    deal = deals.get(callback.message.message_id)
-    if not deal:
-        await callback.answer()
-        return
-
-    if deal["state"] != "working":
-        await callback.answer("Сначала возьмите сделку в работу", show_alert=True)
-        return
-
-    if callback.from_user.id != deal["worker_id"]:
-        await callback.answer("Только исполнитель может отметить квитанцию", show_alert=True)
-        return
-
-    deal["state"] = "awaiting_rate"
-
-    await callback.message.edit_text(
-        f"📋 Статус: Ожидает курс\n\n"
-        f"👤 Исполнитель: {deal['worker_name']}\n\n"
         f"💱 Курс сделки: {deal['deal_rate']}\n"
         f"💵 Сумма сделки: {format_amount(deal['pay_amount'])}\n\n"
         f"Ответьте на это сообщение фактическим курсом.",
