@@ -103,20 +103,16 @@ def get_pay_amount(text: str) -> float:
     Ищет сумму в строке 'Платите: 10,147 UAH'
     """
     match = re.search(
-        r"Платите:\s*([\d\s,\.]+)",
+        r"Платите\s*:?\s*([0-9][0-9,\.\s]*)",
         text,
-        re.IGNORECASE
+        re.IGNORECASE | re.DOTALL,
     )
 
     if not match:
         return 0.0
 
     value = match.group(1)
-    value = (
-        value.replace(" ", "")
-             .replace(",", "")
-             .strip()
-    )
+    value = value.replace(" ", "").replace(",", "")
 
     try:
         return float(value)
