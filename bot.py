@@ -13,7 +13,6 @@ from aiogram.types import (
 
 TOKEN = os.getenv("TOKEN")
 
-GROUP_ID = -1003958494363
 
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
