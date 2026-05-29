@@ -139,7 +139,17 @@ async def close_deal(callback: CallbackQuery):
 
 async def main():
     print("WORK BOT STARTED")
-    await dp.start_polling(bot)
+
+    await bot.delete_webhook(drop_pending_updates=True)
+
+    me = await bot.get_me()
+    print(f"BOT USERNAME: @{me.username}")
+    print(f"BOT ID: {me.id}")
+
+    await dp.start_polling(
+        bot,
+        allowed_updates=["message", "callback_query"]
+    )
 
 
 if __name__ == "__main__":
