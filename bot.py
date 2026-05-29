@@ -73,6 +73,7 @@ async def deal_handler(message: Message):
         "receipt": False,
         "fact_rate": None,
         "deal_rate": deal_rate,
+        "deal_message_id": message.message_id,
     }
 
 
@@ -121,12 +122,22 @@ async def receipt_handler(message: Message):
     if not message.reply_to_message:
         return
 
-    deal = deals.get(message.reply_to_message.message_id)
+    deal = None
+    service_message_id = None
+
+    for msg_id, d in deals.items():
+        if d["deal_message_id"] == message.reply_to_message.message_id:
+            deal = d
+            service_message_id = msg_id
+            break
 
     if not deal:
         return
 
     if message.from_user.id != deal["worker_id"]:
+        return
+
+    if deal["receipt"]:
         return
 
     rate = ""
@@ -148,7 +159,10 @@ async def receipt_handler(message: Message):
         ]
     )
 
-    await message.reply_to_message.edit_text(
+    await bot.edit_message_text(
+        chat_id=GROUP_ID,
+        message_id=service_message_id,
+        text=
         f"📋 Статус: В работе\n\n"
         f"👤 Исполнитель: {deal['worker_name']}\n"
         f"⚡ Реакция: {deal['reaction']} сек\n\n"
