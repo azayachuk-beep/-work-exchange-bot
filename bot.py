@@ -97,12 +97,10 @@ async def take_deal(callback: CallbackQuery):
     )
 
     deal["worker_id"] = callback.from_user.id
-
     deal["worker_name"] = (
         callback.from_user.username
         or callback.from_user.full_name
     )
-
     deal["reaction"] = reaction
 
     await callback.message.edit_text(
@@ -119,72 +117,13 @@ async def take_deal(callback: CallbackQuery):
 @dp.message()
 async def receipt_handler(message: Message):
 
-    if not message.photo:
-        return
-
-    print("PHOTO RECEIVED")
-
-    if message.reply_to_message:
-        print("REPLY TO:", message.reply_to_message.message_id)
-
-    if not message.reply_to_message:
-        print("NO REPLY")
-        return
-
-    deal = None
-    service_message_id = None
-
-    for msg_id, d in deals.items():
-        if d["deal_message_id"] == message.reply_to_message.message_id:
-            deal = d
-            service_message_id = msg_id
-            break
-
-    if not deal:
-        print("DEAL NOT FOUND")
-        return
-
-    if message.from_user.id != deal["worker_id"]:
-        print("WRONG WORKER")
-        return
-
-    if deal["receipt"]:
-        print("RECEIPT ALREADY EXISTS")
-        return
-
-    rate = ""
-
-    if message.caption:
-        rate = message.caption.strip()
-
-    deal["receipt"] = True
-    deal["fact_rate"] = rate
-
-    keyboard = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text="✅ Завершить сделку",
-                    callback_data="close"
-                )
-            ]
-        ]
+    print(
+        "PHOTO:", bool(message.photo),
+        "DOCUMENT:", bool(message.document),
+        "TEXT:", bool(message.text),
+        "REPLY:", bool(message.reply_to_message),
+        "CAPTION:", message.caption
     )
-
-    await bot.edit_message_text(
-        chat_id=GROUP_ID,
-        message_id=service_message_id,
-        text=
-        f"📋 Статус: В работе\n\n"
-        f"👤 Исполнитель: {deal['worker_name']}\n"
-        f"⚡ Реакция: {deal['reaction']} сек\n\n"
-        f"💱 Курс сделки: {deal['deal_rate']}\n"
-        f"💸 Фактический курс: {rate}\n\n"
-        f"📸 Квитанция загружена",
-        reply_markup=keyboard
-    )
-
-    print("RECEIPT SAVED")
 
 
 @dp.callback_query(F.data == "close")
@@ -194,29 +133,6 @@ async def close_deal(callback: CallbackQuery):
 
     if not deal:
         return
-
-    if callback.from_user.id != deal["author_id"]:
-        await callback.answer(
-            "Закрыть может только автор сделки",
-            show_alert=True
-        )
-        return
-
-    if not deal["receipt"]:
-        await callback.answer(
-            "Сначала загрузите квитанцию",
-            show_alert=True
-        )
-        return
-
-    await callback.message.edit_text(
-        f"✅ Сделка завершена\n\n"
-        f"👤 Исполнитель: {deal['worker_name']}\n"
-        f"📨 Автор: {deal['author_name']}\n\n"
-        f"💱 Курс сделки: {deal['deal_rate']}\n"
-        f"💸 Фактический курс: {deal['fact_rate']}\n\n"
-        f"⚡ Реакция: {deal['reaction']} сек"
-    )
 
     await callback.answer()
 
