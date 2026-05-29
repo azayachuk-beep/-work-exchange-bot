@@ -100,24 +100,28 @@ def get_deal_rate(text: str) -> str:
 
 def get_pay_amount(text: str) -> float:
     """
-    Ищет сумму в строке 'Платите: 10,147 UAH'
+    Ищет сумму сделки из строки:
+    Платите: 10,147 UAH
+    Платите 10,147 UAH
+    Платите:
+    10,147 UAH
     """
-    match = re.search(
-        r"Платите\s*:?\s*([0-9][0-9,\.\s]*)",
-        text,
-        re.IGNORECASE | re.DOTALL,
-    )
+    patterns = [
+        r"Платите\s*:?\s*([\d\s,\.]+)",
+        r"Платите[^\n\r]*\n\s*([\d\s,\.]+)",
+    ]
 
-    if not match:
-        return 0.0
+    for pattern in patterns:
+        match = re.search(pattern, text, re.IGNORECASE | re.DOTALL)
+        if match:
+            value = match.group(1)
+            value = value.replace(" ", "").replace(",", "")
+            try:
+                return float(value)
+            except Exception:
+                return 0.0
 
-    value = match.group(1)
-    value = value.replace(" ", "").replace(",", "")
-
-    try:
-        return float(value)
-    except Exception:
-        return 0.0
+    return 0.0
 
 
 def extract_fact_rate(text: str) -> str:
@@ -292,7 +296,8 @@ async def handle_messages(message: Message):
                     f"👤 Исполнитель: {deal['worker_name']}\n"
                     f"⚡ Реакция: {deal['reaction']} сек\n\n"
                     f"💱 Курс сделки: {deal['deal_rate']}\n"
-                    f"💸 Фактический курс: {deal['fact_rate']}\n\n"
+                    f"💸 Фактический курс: {deal['fact_rate']}\n"
+                    f"💵 Сумма сделки: {deal['pay_amount']}\n\n"
                     f"📸 Квитанция загружена"
                 ),
                 reply_markup=kb_close()
@@ -307,7 +312,8 @@ async def handle_messages(message: Message):
 
         service = await message.reply(
             f"📋 Статус: Свободна\n\n"
-            f"💱 Курс сделки: {deal_rate}",
+            f"💱 Курс сделки: {deal_rate}\n"
+            f"💵 Сумма сделки: {pay_amount}",
             reply_markup=kb_take()
         )
 
@@ -352,7 +358,8 @@ async def take_deal(callback: CallbackQuery):
         f"📋 Статус: В работе\n\n"
         f"👤 Исполнитель: {deal['worker_name']}\n"
         f"⚡ Реакция: {reaction} сек\n\n"
-        f"💱 Курс сделки: {deal['deal_rate']}\n\n"
+        f"💱 Курс сделки: {deal['deal_rate']}\n"
+        f"💵 Сумма сделки: {deal['pay_amount']}\n\n"
         f"📸 Квитанция: ожидается",
         reply_markup=kb_receipt()
     )
@@ -380,7 +387,8 @@ async def receipt_loaded(callback: CallbackQuery):
     await callback.message.edit_text(
         f"📋 Статус: Ожидает курс\n\n"
         f"👤 Исполнитель: {deal['worker_name']}\n\n"
-        f"💱 Курс сделки: {deal['deal_rate']}\n\n"
+        f"💱 Курс сделки: {deal['deal_rate']}\n"
+        f"💵 Сумма сделки: {deal['pay_amount']}\n\n"
         f"Ответьте на это сообщение фактическим курсом.",
         reply_markup=None
     )
