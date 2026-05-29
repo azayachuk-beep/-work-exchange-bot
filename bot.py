@@ -30,27 +30,34 @@ def user_label(user) -> str:
     if getattr(user, "username", None):
         return f"@{user.username}"
     return user.full_name or "Неизвестно"
-def save_log(author, worker):
 
+
+def load_logs():
     try:
         with open(LOG_FILE, "r", encoding="utf-8") as f:
             data = json.load(f)
-    except:
-        data = []
+            if isinstance(data, list):
+                return data
+    except Exception:
+        pass
+    return []
 
-    data.append({
-        "date": str(date.today()),
-        "author": author,
-        "worker": worker
-    })
 
-    with open(LOG_FILE, "w", encoding="utf-8") as f:
-        json.dump(
-            data,
-            f,
-            ensure_ascii=False,
-            indent=2
+def save_log(author, worker):
+    try:
+        data = load_logs()
+        data.append(
+            {
+                "date": str(date.today()),
+                "author": author,
+                "worker": worker,
+            }
         )
+        with open(LOG_FILE, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        print("SAVE LOG ERROR:", e)
+
 
 def get_deal_rate(text: str) -> str:
     """
@@ -125,10 +132,53 @@ def kb_close() -> InlineKeyboardMarkup:
     )
 
 
+def stats_by_field(field: str, title: str) -> str:
+    logs = load_logs()
+    today = str(date.today())
+
+    counter = Counter(
+        item.get(field)
+        for item in logs
+        if item.get("date") == today and item.get(field)
+    )
+
+    if not counter:
+        return f"{title}\n\nСегодня сделок нет"
+
+    lines = [title, ""]
+    for idx, (name, count) in enumerate(counter.most_common(), start=1):
+        lines.append(f"{idx}. {name} — {count}")
+
+    return "\n".join(lines)
+
+
 @dp.message()
 async def handle_messages(message: Message):
-    content = message.text or message.caption or ""
+    content = (message.text or message.caption or "").strip()
+
     if not content:
+        return
+
+    if content.startswith("/workers"):
+        await message.answer(
+            stats_by_field("worker", "👨‍💼 Исполнители за сегодня")
+        )
+        return
+
+    if content.startswith("/authors"):
+        await message.answer(
+            stats_by_field("author", "📝 Авторы за сегодня")
+        )
+        return
+
+    if content.startswith("/today"):
+        logs = load_logs()
+        today = str(date.today())
+        count = sum(1 for item in logs if item.get("date") == today)
+
+        await message.answer(
+            f"📊 Сегодня\n\n✅ Завершено сделок: {count}"
+        )
         return
 
     # 1) Если это ответ на карточку "Ожидает курс" — принимаем фактический курс
@@ -137,7 +187,6 @@ async def handle_messages(message: Message):
         deal = deals.get(service_message_id)
 
         if deal and deal.get("state") == "awaiting_rate":
-            # Курс должен прислать только исполнитель
             if message.from_user.id != deal["worker_id"]:
                 return
 
@@ -264,12 +313,12 @@ async def close_deal(callback: CallbackQuery):
 
     deal["state"] = "closed"
 
-save_log(
-    deal["author_name"],
-    deal["worker_name"]
-)
+    save_log(
+        deal["author_name"],
+        deal["worker_name"]
+    )
 
-await callback.message.edit_text(
+    await callback.message.edit_text(
         f"✅ Сделка завершена\n\n"
         f"👤 Исполнитель: {deal['worker_name']}\n"
         f"📨 Автор: {deal['author_name']}\n\n"
