@@ -94,12 +94,21 @@ def load_logs():
     return []
 
 
-def save_log(author, worker, profit=0.0, pay_amount=0.0, deal_rate=0.0, fact_rate=0.0):
+def save_log(
+    author,
+    worker,
+    deal_id="",
+    profit=0.0,
+    pay_amount=0.0,
+    deal_rate=0.0,
+    fact_rate=0.0,
+):
     try:
         data = load_logs()
         data.append(
             {
                 "date": current_date_key(),
+                "deal_id": deal_id,
                 "author": author,
                 "worker": worker,
                 "profit": round(float(profit), 2),
@@ -134,13 +143,25 @@ def get_deal_rate(text: str) -> str:
     return "Не найден"
 
 
+def get_deal_id(text: str) -> str:
+    match = re.search(
+        r"Сделка\s*#([A-Z0-9]+)",
+        text,
+        re.IGNORECASE,
+    )
+    if match:
+        return match.group(1)
+    return "UNKNOWN"
+
+
 def get_pay_amount(text: str) -> float:
     """
     Ищет сумму сделки из строки:
     Платите: 🪙 10,147 UAH
+    Получаете: 🪙 2,500 UAH
     """
     match = re.search(
-        r"Платите:.*?([0-9][0-9,]*)",
+        r"(?:Платите|Получаете):.*?([0-9][0-9,\s.]*)",
         text,
         re.IGNORECASE | re.DOTALL,
     )
@@ -148,7 +169,8 @@ def get_pay_amount(text: str) -> float:
     if not match:
         return 0.0
 
-    value = match.group(1).replace(",", "")
+    value = match.group(1)
+    value = value.replace(" ", "").replace(",", "")
 
     try:
         return float(value)
@@ -222,20 +244,25 @@ def stats_by_field(field: str, title: str, days: int = 0) -> str:
     return "\n".join(lines)
 
 
-def profit_stats(days: int = 0) -> str:
+def profit_stats_for_period(days: int = 0) -> str:
     logs = load_logs()
 
     if days == 0:
         filtered = [item for item in logs if item.get("date") == current_date_key()]
-        title = "💰 Профит авторов за сегодня"
+        title = "💰 Профит за сегодня"
+    elif days == 1:
+        target = str(current_date() - timedelta(days=1))
+        filtered = [item for item in logs if item.get("date") == target]
+        title = "💰 Профит за вчера"
     else:
         filtered = [
             item for item in logs
             if item.get("date") and is_within_last_days(item.get("date"), days)
         ]
-        title = "💰 Профит авторов за неделю"
+        title = "💰 Профит за неделю"
 
     totals = {}
+    counts = {}
 
     for item in filtered:
         author = item.get("author")
@@ -248,22 +275,29 @@ def profit_stats(days: int = 0) -> str:
             profit = 0.0
 
         totals[author] = totals.get(author, 0.0) + profit
+        counts[author] = counts.get(author, 0) + 1
 
     if not totals:
-        return f"{title}\n\nСегодня сделок нет" if days == 0 else f"{title}\n\nЗа период сделок нет"
+        return f"{title}\n\nЗа период сделок нет"
 
     lines = [title, ""]
-    total_sum = 0.0
+    total_profit = 0.0
+    total_deals = 0
 
     for idx, (author, value) in enumerate(
         sorted(totals.items(), key=lambda x: x[1], reverse=True),
         start=1,
     ):
-        lines.append(f"{idx}. {author} — ${value:.2f}")
-        total_sum += value
+        lines.append(
+            f"{idx}. {author}\n"
+            f"Сделок: {counts[author]}\n"
+            f"Профит: ${value:.2f}\n"
+        )
+        total_profit += value
+        total_deals += counts[author]
 
-    lines.append("")
-    lines.append(f"💵 Итого: ${total_sum:.2f}")
+    lines.append(f"💵 Общий профит: ${total_profit:.2f}")
+    lines.append(f"📊 Всего сделок: {total_deals}")
 
     return "\n".join(lines)
 
@@ -316,11 +350,15 @@ async def handle_messages(message: Message):
         return
 
     if content.startswith("/profit"):
-        await message.answer(profit_stats())
+        await message.answer(profit_stats_for_period(days=0))
+        return
+
+    if content.startswith("/yesterday_profit"):
+        await message.answer(profit_stats_for_period(days=1))
         return
 
     if content.startswith("/week_profit"):
-        await message.answer(profit_stats(days=6))
+        await message.answer(profit_stats_for_period(days=6))
         return
 
     # Если это ответ на карточку "Ожидает курс" — принимаем фактический курс
@@ -346,6 +384,7 @@ async def handle_messages(message: Message):
                 message_id=service_message_id,
                 text=(
                     f"📋 Статус: Ожидает закрытия\n\n"
+                    f"🆔 Сделка: {deal['deal_id']}\n\n"
                     f"👤 Исполнитель: {deal['worker_name']}\n"
                     f"⚡ Реакция: {deal['reaction']} сек\n\n"
                     f"💱 Курс сделки: {deal['deal_rate']}\n"
@@ -360,11 +399,13 @@ async def handle_messages(message: Message):
     # Новая сделка
     if "Сделка #" in content:
         deal_rate = get_deal_rate(content)
+        deal_id = get_deal_id(content)
         deal_rate_value = parse_first_number(deal_rate)
         pay_amount = get_pay_amount(content)
 
         service = await message.reply(
             f"📋 Статус: Свободна\n\n"
+            f"🆔 Сделка: {deal_id}\n\n"
             f"💱 Курс сделки: {deal_rate}\n"
             f"💵 Сумма сделки: {format_amount(pay_amount)}",
             reply_markup=kb_take()
@@ -372,6 +413,7 @@ async def handle_messages(message: Message):
 
         deals[service.message_id] = {
             "state": "free",
+            "deal_id": deal_id,
             "author_id": message.from_user.id,
             "author_name": user_label(message.from_user),
             "created": datetime.now(),
@@ -409,6 +451,7 @@ async def take_deal(callback: CallbackQuery):
 
     await callback.message.edit_text(
         f"📋 Статус: В работе\n\n"
+        f"🆔 Сделка: {deal['deal_id']}\n\n"
         f"👤 Исполнитель: {deal['worker_name']}\n"
         f"⚡ Реакция: {reaction} сек\n\n"
         f"💱 Курс сделки: {deal['deal_rate']}\n"
@@ -453,6 +496,7 @@ async def close_deal(callback: CallbackQuery):
     save_log(
         deal["author_name"],
         deal["worker_name"],
+        deal["deal_id"],
         profit=profit,
         pay_amount=pay_amount,
         deal_rate=deal_rate_value,
@@ -461,6 +505,7 @@ async def close_deal(callback: CallbackQuery):
 
     await callback.message.edit_text(
         f"✅ Сделка завершена\n\n"
+        f"🆔 Сделка: {deal['deal_id']}\n\n"
         f"👤 Исполнитель: {deal['worker_name']}\n"
         f"📨 Автор: {deal['author_name']}\n\n"
         f"💱 Курс сделки: {deal['deal_rate']}\n"
