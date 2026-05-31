@@ -28,7 +28,6 @@ TZ = ZoneInfo("Asia/Tbilisi")
 
 
 def user_label(user) -> str:
-    """Красивое имя пользователя."""
     if getattr(user, "username", None):
         return f"@{user.username}"
     return user.full_name or "Неизвестно"
@@ -50,7 +49,6 @@ def parse_first_number(text: str) -> float:
 
 
 def format_amount(value: float) -> str:
-    """Красиво показывает сумму без лишних .0."""
     try:
         value = float(value)
     except Exception:
@@ -144,19 +142,25 @@ def get_deal_rate(text: str) -> str:
 
 
 def get_deal_id(text: str) -> str:
+    """
+    Ищет номер сделки.
+    Пример:
+    Сделка #D38009350
+    """
     match = re.search(
-        r"Сделка\s*#([A-Z0-9]+)",
+        r"Сделка\s*#([^\s\n]+)",
         text,
         re.IGNORECASE,
     )
     if match:
-        return match.group(1)
+        return match.group(1).strip().replace("📄", "").replace("📄", "")
+
     return "UNKNOWN"
 
 
 def get_pay_amount(text: str) -> float:
     """
-    Ищет сумму сделки из строки:
+    Ищет сумму сделки из строк:
     Платите: 🪙 10,147 UAH
     Получаете: 🪙 2,500 UAH
     """
@@ -179,13 +183,6 @@ def get_pay_amount(text: str) -> float:
 
 
 def extract_fact_rate(text: str) -> str:
-    """
-    Достаёт фактический курс из ответа сотрудника.
-    Примеры:
-    - 44.2
-    - 44,2
-    - курс 44.2
-    """
     value = parse_first_number(text)
     if value <= 0:
         return ""
