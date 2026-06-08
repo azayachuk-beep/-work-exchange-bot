@@ -2,7 +2,6 @@ import os
 import re
 import json
 import asyncio
-from collections import Counter
 from datetime import datetime, date, timedelta
 from zoneinfo import ZoneInfo
 
@@ -28,6 +27,7 @@ TZ = ZoneInfo("Asia/Tbilisi")
 def user_label(user) -> str:
     if getattr(user, "username", None):
         return f"@{user.username}"
+
     return user.full_name or f"id{user.id}"
 
 
@@ -38,6 +38,7 @@ def normalize_number(value: float) -> str:
 
 def parse_first_number(text: str) -> float:
     match = re.search(r"([0-9]+(?:[.,][0-9]+)?)", text)
+
     if not match:
         return 0.0
 
@@ -102,6 +103,9 @@ def save_logs(data):
         json.dump(data, f, ensure_ascii=False, indent=2)
 
 
+# =========================
+# ЗАЩИТА ОТ ДУБЛЕЙ
+# =========================
 def save_log(
     deal_id="",
     author_id=0,
@@ -112,9 +116,16 @@ def save_log(
 ):
     data = load_logs()
 
+    # НЕ СОХРАНЯЕМ ДУБЛЬ
+    for item in data:
+        if item.get("deal_id") == deal_id:
+            print(f"DUPLICATE DEAL SKIPPED: {deal_id}")
+            return
+
     data.append(
         {
             "date": current_date_key(),
+
             "deal_id": deal_id,
 
             "author_id": author_id,
@@ -313,6 +324,7 @@ def profit_stats(days=0):
             x for x in logs
             if x.get("date") == current_date_key()
         ]
+
         title = "💰 Профит за сегодня"
 
     elif days == 1:
@@ -389,7 +401,9 @@ async def handle_messages(message: Message):
     if not content:
         return
 
-    # ========= КОМАНДЫ =========
+    # =========================
+    # КОМАНДЫ
+    # =========================
 
     if content.startswith("/week_workers"):
         await message.answer(
@@ -478,7 +492,9 @@ async def handle_messages(message: Message):
         )
         return
 
-    # ========= ВВОД КУРСА =========
+    # =========================
+    # ВВОД КУРСА
+    # =========================
 
     if message.reply_to_message:
         service_message_id = message.reply_to_message.message_id
@@ -538,7 +554,9 @@ async def handle_messages(message: Message):
 
             return
 
-    # ========= НОВАЯ СДЕЛКА =========
+    # =========================
+    # НОВАЯ СДЕЛКА
+    # =========================
 
     if "Сделка #" in content:
         deal_rate = get_deal_rate(content)
@@ -585,6 +603,8 @@ async def handle_messages(message: Message):
             "pay_amount": pay_amount,
 
             "profit": 0.0,
+
+            "closed": False,
         }
 
         return
@@ -714,6 +734,9 @@ async def cancel_deal(callback: CallbackQuery):
     )
 
 
+# =========================
+# ЗАКРЫТИЕ БЕЗ ДУБЛЕЙ
+# =========================
 @dp.callback_query(F.data == "close")
 async def close_deal(callback: CallbackQuery):
     deal = deals.get(callback.message.message_id)
@@ -727,6 +750,16 @@ async def close_deal(callback: CallbackQuery):
             show_alert=True
         )
         return
+
+    # БЛОК ОТ ДУБЛЕЙ
+    if deal.get("closed"):
+        await callback.answer(
+            "Сделка уже закрыта",
+            show_alert=True
+        )
+        return
+
+    deal["closed"] = True
 
     profit = calc_profit(
         deal["pay_amount"],
