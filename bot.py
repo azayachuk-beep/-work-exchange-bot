@@ -1,6 +1,7 @@
 import os
 import re
 import json
+import ssl
 import asyncio
 from datetime import datetime, date, timedelta
 from zoneinfo import ZoneInfo
@@ -39,7 +40,13 @@ def get_dsn() -> str | None:
 
 
 def get_ssl_setting():
-    return True if DATABASE_URL else None
+    if not DATABASE_URL:
+        return None
+
+    ctx = ssl.create_default_context()
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+    return ctx
 
 
 def user_label(user) -> str:
@@ -245,9 +252,9 @@ async def upsert_active_deal(deal: dict):
             """
             INSERT INTO active_deals
             (chat_id, service_message_id, state, deal_id, author_id, author_name, worker_id, worker_name,
-             deal_rate, deal_rate_value, fact_rate, fact_rate_value, pay_amount, pay_currency, profit, closed, created_at, updated_at)
+             deal_rate, deal_rate_value, fact_rate, fact_rate_value, pay_amount, pay_currency, profit, closed)
             VALUES
-            ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17, NOW())
+            ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
             ON CONFLICT (chat_id, service_message_id) DO UPDATE SET
                 state = EXCLUDED.state,
                 deal_id = EXCLUDED.deal_id,
@@ -513,23 +520,28 @@ async def stats_by_field(field: str, title: str, start_date: date, end_date: dat
 
     if field == "worker":
         sql = """
-            SELECT worker_name AS name, worker_id AS uid, COUNT(*) AS cnt
+            SELECT
+                worker_id AS uid,
+                COALESCE(MAX(NULLIF(worker_name, '')), 'id' || worker_id::text) AS name,
+                COUNT(*) AS cnt
             FROM completed_deals
             WHERE date BETWEEN $1 AND $2
-            GROUP BY worker_id, worker_name
+            GROUP BY worker_id
             ORDER BY cnt DESC, name ASC
         """
     else:
         sql = """
-            SELECT author_name AS name, author_id AS uid, COUNT(*) AS cnt
+            SELECT
+                author_id AS uid,
+                COALESCE(MAX(NULLIF(author_name, '')), 'id' || author_id::text) AS name,
+                COUNT(*) AS cnt
             FROM completed_deals
             WHERE date BETWEEN $1 AND $2
-            GROUP BY author_id, author_name
+            GROUP BY author_id
             ORDER BY cnt DESC, name ASC
         """
 
     rows = await pool.fetch(sql, start_date, end_date)
-
     period_line = (
         f"📅 {start_date:%d.%m.%Y}"
         if start_date == end_date
@@ -553,10 +565,14 @@ async def profit_report(start_date: date, end_date: date, title: str):
 
     rows = await pool.fetch(
         """
-        SELECT worker_name AS name, worker_id AS uid, COUNT(*) AS cnt, COALESCE(SUM(profit), 0) AS profit
+        SELECT
+            worker_id AS uid,
+            COALESCE(MAX(NULLIF(worker_name, '')), 'id' || worker_id::text) AS name,
+            COUNT(*) AS cnt,
+            COALESCE(SUM(profit), 0) AS profit
         FROM completed_deals
         WHERE date BETWEEN $1 AND $2
-        GROUP BY worker_id, worker_name
+        GROUP BY worker_id
         ORDER BY profit DESC, cnt DESC, name ASC
         """,
         start_date,
@@ -597,7 +613,13 @@ async def count_completed_between(start_date: date, end_date: date) -> int:
     assert pool is not None
     if start_date > end_date:
         start_date, end_date = end_date, start_date
-    return int(await pool.fetchval("SELECT COUNT(*) FROM completed_deals WHERE date BETWEEN $1 AND $2", start_date, end_date) or 0)
+    return int(
+        await pool.fetchval(
+            "SELECT COUNT(*) FROM completed_deals WHERE date BETWEEN $1 AND $2",
+            start_date,
+            end_date
+        ) or 0
+    )
 
 
 async def deal_exists(deal_id: str) -> bool:
@@ -754,7 +776,6 @@ async def handle_messages(message: Message):
             "pay_currency": pay_currency,
             "profit": 0.0,
             "closed": False,
-            "created_at": datetime.now(TZ),
         }
 
         deals[(message.chat.id, service.message_id)] = deal
