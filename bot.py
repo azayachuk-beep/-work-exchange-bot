@@ -1,4 +1,4 @@
-import os
+ import os
 import re
 import json
 import ssl
@@ -505,14 +505,6 @@ def render_closed_card(deal) -> str:
     )
 
 
-async def send_card_reply(card_message: Message, text: str):
-    await bot.send_message(
-        chat_id=card_message.chat.id,
-        text=text,
-        reply_to_message_id=card_message.message_id,
-    )
-
-
 async def stats_by_field(field: str, title: str, start_date: date, end_date: date):
     assert pool is not None
     if start_date > end_date:
@@ -566,13 +558,13 @@ async def profit_report(start_date: date, end_date: date, title: str):
     rows = await pool.fetch(
         """
         SELECT
-            worker_id AS uid,
-            COALESCE(MAX(NULLIF(worker_name, '')), 'id' || worker_id::text) AS name,
+            author_id AS uid,
+            COALESCE(MAX(NULLIF(author_name, '')), 'id' || author_id::text) AS name,
             COUNT(*) AS cnt,
             COALESCE(SUM(profit), 0) AS profit
         FROM completed_deals
         WHERE date BETWEEN $1 AND $2
-        GROUP BY worker_id
+        GROUP BY author_id
         ORDER BY profit DESC, cnt DESC, name ASC
         """,
         start_date,
@@ -804,16 +796,6 @@ async def take_deal(callback: CallbackQuery):
     await callback.message.edit_text(
         render_working_card(deal),
         reply_markup=kb_working(),
-    )
-
-    await send_card_reply(
-        callback.message,
-        (
-            f"🛠 Сделка взята в работу\n\n"
-            f"🆔 {deal['deal_id']}\n"
-            f"💵 Сумма: {render_amount_line(deal)}\n\n"
-            f"👤 Исполнитель: {deal['worker_name']}"
-        ),
     )
 
     await callback.answer()
